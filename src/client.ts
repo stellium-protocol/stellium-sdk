@@ -144,9 +144,7 @@ export class StelliumClient {
       new Account("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "0"),
       { fee: BASE_FEE, networkPassphrase: this.networkPassphrase }
     )
-      .addOperation(
-        contract.call("verify", nativeToScVal(BigInt(paymentId), { type: "u64" }))
-      )
+      .addOperation(contract.call("verify", nativeToScVal(BigInt(paymentId), { type: "u64" })))
       .setTimeout(30)
       .build();
 
@@ -174,9 +172,7 @@ export class StelliumClient {
       new Account("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "0"),
       { fee: BASE_FEE, networkPassphrase: this.networkPassphrase }
     )
-      .addOperation(
-        contract.call("get_payment", nativeToScVal(BigInt(paymentId), { type: "u64" }))
-      )
+      .addOperation(contract.call("get_payment", nativeToScVal(BigInt(paymentId), { type: "u64" })))
       .setTimeout(30)
       .build();
 
@@ -216,7 +212,7 @@ export class StelliumClient {
 
   // TODO: Implement getEscrow using Soroban RPC simulate
   // Should call the escrow contract's `get_escrow` function and return typed details
-  async getEscrow(escrowId: number): Promise<EscrowDetails | null> {
+  async getEscrow(_escrowId: number): Promise<EscrowDetails | null> {
     // Use this.server.simulateTransaction() to call `get_escrow(escrow_id)`
     // Parse the ScVal response into an EscrowDetails object
     throw new Error("Not implemented — see CONTRIBUTING.md");
@@ -235,12 +231,7 @@ export class StelliumClient {
       fee: BASE_FEE,
       networkPassphrase: this.networkPassphrase,
     })
-      .addOperation(
-        contract.call(
-          action,
-          nativeToScVal(BigInt(params.escrowId), { type: "u64" })
-        )
-      )
+      .addOperation(contract.call(action, nativeToScVal(BigInt(params.escrowId), { type: "u64" })))
       .setTimeout(30)
       .build();
 
