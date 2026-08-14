@@ -22,6 +22,7 @@ import type {
   Network,
 } from "./types";
 import { getRpcUrl } from "./utils";
+import { TransactionError, NetworkError } from "./errors";
 
 const NETWORK_PASSPHRASES: Record<Network, string> = {
   testnet: Networks.TESTNET,
@@ -29,12 +30,59 @@ const NETWORK_PASSPHRASES: Record<Network, string> = {
   futurenet: Networks.FUTURENET,
 };
 
+/**
+ * Main client for interacting with the Stellium payment and escrow contracts on Stellar/Soroban.
+ *
+ * Provides methods to create payments, manage escrows, and query on-chain state.
+ * Uses Soroban RPC to submit and simulate transactions against deployed smart contracts.
+ *
+ * @example
+ * ```typescript
+ * const client = new StelliumClient({
+ *   network: "testnet",
+ *   paymentContractId: "CABC123...",
+ *   escrowContractId: "CDEF456...",
+ * });
+ *
+ * // Create a direct payment
+ * const result = await client.createPayment({
+ *   senderSecretKey: "SABC123...",
+ *   recipient: "GXYZ789...",
+ *   amount: "10000000", // 1 XLM in stroops
+ * });
+ * console.log("Payment tx hash:", result.txHash);
+ * ```
+ */
 export class StelliumClient {
   private server: SorobanRpc.Server;
   private networkPassphrase: string;
   private escrowContractId: string;
   private paymentContractId: string;
 
+  /**
+   * Create a new StelliumClient instance.
+   *
+   * @param config - Configuration object specifying the network, contract IDs, and optional RPC URL.
+   * @throws {Error} If the provided network is not a valid {@link Network} value.
+   *
+   * @example
+   * ```typescript
+   * // Basic usage with testnet
+   * const client = new StelliumClient({
+   *   network: "testnet",
+   *   paymentContractId: "CABC123...",
+   *   escrowContractId: "CDEF456...",
+   * });
+   *
+   * // With custom RPC URL
+   * const client = new StelliumClient({
+   *   network: "testnet",
+   *   paymentContractId: "CABC123...",
+   *   escrowContractId: "CDEF456...",
+   *   rpcUrl: "https://my-custom-rpc.example.com",
+   * });
+   * ```
+   */
   constructor(config: StelliumConfig) {
     const rpcUrl = config.rpcUrl || getRpcUrl(config.network);
     this.server = new SorobanRpc.Server(rpcUrl);
@@ -43,7 +91,30 @@ export class StelliumClient {
     this.paymentContractId = config.paymentContractId;
   }
 
-  /** Create and submit a direct payment */
+  /**
+   * Create and submit a direct payment transaction to the payment contract.
+   *
+   * Builds a Soroban transaction that calls the `pay` function on the payment contract,
+   * signs it with the sender's secret key, and submits it to the network.
+   *
+   * @param params - Payment parameters including sender key, recipient, amount, and optional asset/metadata.
+   * @returns A promise that resolves to a {@link PaymentResult} containing the payment ID and transaction hash.
+   * @throws {TransactionError} If the transaction is rejected by the network.
+   * @throws {NetworkError} If the RPC request fails due to network issues.
+   *
+   * @example
+   * ```typescript
+   * const result = await client.createPayment({
+   *   senderSecretKey: "SABC123...",
+   *   recipient: "GXYZ789...",
+   *   amount: "10000000", // 1 XLM in stroops
+   *   metadata: "Order #1234",
+   * });
+   *
+   * console.log("Payment ID:", result.paymentId);
+   * console.log("Transaction hash:", result.txHash);
+   * ```
+   */
   async createPayment(params: CreatePaymentParams): Promise<PaymentResult> {
     const keypair = Keypair.fromSecret(params.senderSecretKey);
     const account = await this.server.getAccount(keypair.publicKey());
@@ -74,7 +145,10 @@ export class StelliumClient {
     const result = await this.server.sendTransaction(signedTx);
 
     if (result.status === "ERROR") {
-      throw new Error(`Transaction failed: ${JSON.stringify(result.errorResult)}`);
+      throw new TransactionError(
+        `Transaction failed: ${JSON.stringify(result.errorResult)}`,
+        result.errorResult
+      );
     }
 
     // TODO: Parse paymentId from transaction events
@@ -86,7 +160,32 @@ export class StelliumClient {
     };
   }
 
-  /** Create an escrow — locks funds from buyer */
+  /**
+   * Create an escrow that locks funds from the buyer until released or refunded.
+   *
+   * Builds a Soroban transaction that calls the `create` function on the escrow contract.
+   * The buyer's funds are locked for the specified timeout period. The buyer can release
+   * the funds to the seller, or they are automatically refundable after the timeout.
+   *
+   * @param params - Escrow parameters including buyer key, seller address, amount, asset, and timeout.
+   * @returns A promise that resolves to an {@link EscrowResult} containing the escrow ID and transaction hash.
+   * @throws {TransactionError} If the transaction is rejected by the network.
+   * @throws {NetworkError} If the RPC request fails due to network issues.
+   *
+   * @example
+   * ```typescript
+   * const result = await client.createEscrow({
+   *   buyerSecretKey: "SABC123...",
+   *   seller: "GXYZ789...",
+   *   amount: "50000000", // 5 XLM in stroops
+   *   asset: "CABC123...",
+   *   timeoutSeconds: 86400, // 24 hours
+   * });
+   *
+   * console.log("Escrow ID:", result.escrowId);
+   * console.log("Transaction hash:", result.txHash);
+   * ```
+   */
   async createEscrow(params: CreateEscrowParams): Promise<EscrowResult> {
     const keypair = Keypair.fromSecret(params.buyerSecretKey);
     const account = await this.server.getAccount(keypair.publicKey());
@@ -116,7 +215,10 @@ export class StelliumClient {
     const result = await this.server.sendTransaction(signedTx);
 
     if (result.status === "ERROR") {
-      throw new Error(`Transaction failed: ${JSON.stringify(result.errorResult)}`);
+      throw new TransactionError(
+        `Transaction failed: ${JSON.stringify(result.errorResult)}`,
+        result.errorResult
+      );
     }
 
     return {
@@ -125,17 +227,74 @@ export class StelliumClient {
     };
   }
 
-  /** Release escrow funds to seller (buyer only) */
+  /**
+   * Release escrow funds to the seller.
+   *
+   * This action can only be performed by the buyer. Once released, the escrowed funds
+   * are transferred to the seller's account.
+   *
+   * @param params - Escrow action parameters containing the buyer's secret key and escrow ID.
+   * @returns A promise that resolves to the transaction hash string.
+   * @throws {TransactionError} If the transaction fails or the caller is not the escrow buyer.
+   * @throws {NetworkError} If the RPC request fails due to network issues.
+   *
+   * @example
+   * ```typescript
+   * const txHash = await client.releaseEscrow({
+   *   secretKey: "SABC123...", // buyer's secret key
+   *   escrowId: 1,
+   * });
+   * console.log("Released, tx hash:", txHash);
+   * ```
+   */
   async releaseEscrow(params: EscrowActionParams): Promise<string> {
     return this.escrowAction(params, "release");
   }
 
-  /** Refund escrow to buyer (after timeout) */
+  /**
+   * Refund escrow funds back to the buyer.
+   *
+   * This action is typically available after the escrow timeout has elapsed.
+   * The locked funds are returned to the buyer's account.
+   *
+   * @param params - Escrow action parameters containing the user's secret key and escrow ID.
+   * @returns A promise that resolves to the transaction hash string.
+   * @throws {TransactionError} If the transaction fails or the timeout has not yet elapsed.
+   * @throws {NetworkError} If the RPC request fails due to network issues.
+   *
+   * @example
+   * ```typescript
+   * const txHash = await client.refundEscrow({
+   *   secretKey: "SABC123...",
+   *   escrowId: 1,
+   * });
+   * console.log("Refunded, tx hash:", txHash);
+   * ```
+   */
   async refundEscrow(params: EscrowActionParams): Promise<string> {
     return this.escrowAction(params, "refund");
   }
 
-  /** Verify whether a payment exists and is completed */
+  /**
+   * Verify whether a payment exists and has been completed on-chain.
+   *
+   * Uses Soroban's simulate transaction to read the payment contract state
+   * without requiring a funded account or submitting a real transaction.
+   *
+   * @param paymentId - The numeric ID of the payment to verify.
+   * @returns A promise that resolves to `true` if the payment exists and is completed, `false` otherwise.
+   * @throws {NetworkError} If the RPC call fails due to network issues.
+   *
+   * @example
+   * ```typescript
+   * const isComplete = await client.verifyPayment(1);
+   * if (isComplete) {
+   *   console.log("Payment is confirmed!");
+   * } else {
+   *   console.log("Payment not found or not yet completed.");
+   * }
+   * ```
+   */
   async verifyPayment(paymentId: number): Promise<boolean> {
     const contract = new Contract(this.paymentContractId);
 
@@ -154,7 +313,7 @@ export class StelliumClient {
     try {
       result = await this.server.simulateTransaction(tx);
     } catch (err) {
-      throw new Error(
+      throw new NetworkError(
         `Failed to verify payment ${paymentId}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
@@ -166,7 +325,28 @@ export class StelliumClient {
     return false;
   }
 
-  /** Read payment details from the contract */
+  /**
+   * Read payment details from the payment contract.
+   *
+   * Uses Soroban's simulate transaction to fetch the full payment record
+   * including sender, recipient, amount, asset, metadata, and completion status.
+   *
+   * @param paymentId - The numeric ID of the payment to retrieve.
+   * @returns A promise that resolves to a {@link PaymentDetails} object if found, or `null` if the payment does not exist.
+   * @throws {NetworkError} If the RPC call fails due to network issues.
+   *
+   * @example
+   * ```typescript
+   * const payment = await client.getPayment(1);
+   * if (payment) {
+   *   console.log(`Payment from ${payment.sender} to ${payment.recipient}`);
+   *   console.log(`Amount: ${payment.amount} stroops`);
+   *   console.log(`Completed: ${payment.completed}`);
+   * } else {
+   *   console.log("Payment not found.");
+   * }
+   * ```
+   */
   async getPayment(paymentId: number): Promise<PaymentDetails | null> {
     const contract = new Contract(this.paymentContractId);
 
@@ -184,7 +364,7 @@ export class StelliumClient {
     try {
       result = await this.server.simulateTransaction(tx);
     } catch (err) {
-      throw new Error(
+      throw new NetworkError(
         `Failed to get payment ${paymentId}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
@@ -214,6 +394,22 @@ export class StelliumClient {
     };
   }
 
+  /**
+   * Read escrow details from the escrow contract.
+   *
+   * Uses Soroban's simulate transaction to fetch the full escrow record
+   * including buyer, seller, amount, asset, timeout, and release/refund status.
+   *
+   * @param escrowId - The numeric ID of the escrow to retrieve.
+   * @returns A promise that resolves to an {@link EscrowDetails} object if found, or `null` if the escrow does not exist.
+   * @throws {Error} Always throws with "Not implemented" until the feature is completed.
+   *
+   * @example
+   * ```typescript
+   * // Not yet implemented — see CONTRIBUTING.md
+   * const escrow = await client.getEscrow(1);
+   * ```
+   */
   // TODO: Implement getEscrow using Soroban RPC simulate
   // Should call the escrow contract's `get_escrow` function and return typed details
   async getEscrow(escrowId: number): Promise<EscrowDetails | null> {
@@ -222,6 +418,15 @@ export class StelliumClient {
     throw new Error("Not implemented — see CONTRIBUTING.md");
   }
 
+  /**
+   * Internal helper to execute escrow release or refund actions.
+   *
+   * @param params - Escrow action parameters containing the user's secret key and escrow ID.
+   * @param action - The action to perform: `"release"` or `"refund"`.
+   * @returns A promise that resolves to the transaction hash string.
+   * @throws {TransactionError} If the transaction fails to submit or is rejected by the network.
+   * @throws {NetworkError} If the RPC request fails due to network issues.
+   */
   private async escrowAction(
     params: EscrowActionParams,
     action: "release" | "refund"
@@ -250,7 +455,10 @@ export class StelliumClient {
     const result = await this.server.sendTransaction(signedTx);
 
     if (result.status === "ERROR") {
-      throw new Error(`Transaction failed: ${JSON.stringify(result.errorResult)}`);
+      throw new TransactionError(
+        `Transaction failed: ${JSON.stringify(result.errorResult)}`,
+        result.errorResult
+      );
     }
 
     return result.hash;
