@@ -1,4 +1,5 @@
 import * as crypto from "crypto";
+import { ValidationError } from "./errors";
 
 /**
  * Represents a webhook event received from the Stellium platform.
@@ -71,11 +72,12 @@ export function verifyWebhookSignature(
  *
  * @param payload - Raw JSON string of the webhook request body.
  * @returns A typed {@link WebhookEvent} object.
- * @throws {Error} If the payload is not valid JSON or is missing required fields (`type`, `id`, `timestamp`).
+ * @throws {ValidationError} If the payload is missing required fields (`type`, `id`, `timestamp`).
+ * @throws {SyntaxError} If the payload is not valid JSON.
  *
  * @example
  * ```typescript
- * import { parseWebhookEvent } from "@stellium/stellium-sdk";
+ * import { parseWebhookEvent, ValidationError } from "@stellium/stellium-sdk";
  *
  * try {
  *   const event = parseWebhookEvent(request.body);
@@ -89,7 +91,9 @@ export function verifyWebhookSignature(
  *       break;
  *   }
  * } catch (err) {
- *   console.error("Invalid webhook payload:", err.message);
+ *   if (err instanceof ValidationError) {
+ *     console.error("Invalid webhook payload:", err.message);
+ *   }
  * }
  * ```
  */
@@ -97,7 +101,10 @@ export function parseWebhookEvent(payload: string): WebhookEvent {
   const event = JSON.parse(payload);
 
   if (!event.type || !event.id || !event.timestamp) {
-    throw new Error("Invalid webhook event: missing required fields");
+    throw new ValidationError(
+      "Invalid webhook event: missing required fields",
+      "INVALID_WEBHOOK_EVENT"
+    );
   }
 
   return event as WebhookEvent;

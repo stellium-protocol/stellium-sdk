@@ -29,6 +29,13 @@
 export { StelliumClient } from "./client";
 export { verifyWebhookSignature, parseWebhookEvent } from "./webhooks";
 export { stroopsToXlm, xlmToStroops, isValidStellarAddress } from "./utils";
+export {
+  StelliumError,
+  NetworkError,
+  ContractError,
+  ValidationError,
+  TransactionError,
+} from "./errors";
 export type {
   StelliumConfig,
   CreatePaymentParams,

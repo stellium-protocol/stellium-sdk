@@ -22,6 +22,7 @@ import type {
   Network,
 } from "./types";
 import { getRpcUrl } from "./utils";
+import { TransactionError, NetworkError } from "./errors";
 
 const NETWORK_PASSPHRASES: Record<Network, string> = {
   testnet: Networks.TESTNET,
@@ -98,7 +99,8 @@ export class StelliumClient {
    *
    * @param params - Payment parameters including sender key, recipient, amount, and optional asset/metadata.
    * @returns A promise that resolves to a {@link PaymentResult} containing the payment ID and transaction hash.
-   * @throws {Error} If the transaction fails to submit or is rejected by the network.
+   * @throws {TransactionError} If the transaction is rejected by the network.
+   * @throws {NetworkError} If the RPC request fails due to network issues.
    *
    * @example
    * ```typescript
@@ -143,7 +145,10 @@ export class StelliumClient {
     const result = await this.server.sendTransaction(signedTx);
 
     if (result.status === "ERROR") {
-      throw new Error(`Transaction failed: ${JSON.stringify(result.errorResult)}`);
+      throw new TransactionError(
+        `Transaction failed: ${JSON.stringify(result.errorResult)}`,
+        result.errorResult
+      );
     }
 
     // TODO: Parse paymentId from transaction events
@@ -164,7 +169,8 @@ export class StelliumClient {
    *
    * @param params - Escrow parameters including buyer key, seller address, amount, asset, and timeout.
    * @returns A promise that resolves to an {@link EscrowResult} containing the escrow ID and transaction hash.
-   * @throws {Error} If the transaction fails to submit or is rejected by the network.
+   * @throws {TransactionError} If the transaction is rejected by the network.
+   * @throws {NetworkError} If the RPC request fails due to network issues.
    *
    * @example
    * ```typescript
@@ -209,7 +215,10 @@ export class StelliumClient {
     const result = await this.server.sendTransaction(signedTx);
 
     if (result.status === "ERROR") {
-      throw new Error(`Transaction failed: ${JSON.stringify(result.errorResult)}`);
+      throw new TransactionError(
+        `Transaction failed: ${JSON.stringify(result.errorResult)}`,
+        result.errorResult
+      );
     }
 
     return {
@@ -226,7 +235,8 @@ export class StelliumClient {
    *
    * @param params - Escrow action parameters containing the buyer's secret key and escrow ID.
    * @returns A promise that resolves to the transaction hash string.
-   * @throws {Error} If the transaction fails or the caller is not the escrow buyer.
+   * @throws {TransactionError} If the transaction fails or the caller is not the escrow buyer.
+   * @throws {NetworkError} If the RPC request fails due to network issues.
    *
    * @example
    * ```typescript
@@ -249,7 +259,8 @@ export class StelliumClient {
    *
    * @param params - Escrow action parameters containing the user's secret key and escrow ID.
    * @returns A promise that resolves to the transaction hash string.
-   * @throws {Error} If the transaction fails or the timeout has not yet elapsed.
+   * @throws {TransactionError} If the transaction fails or the timeout has not yet elapsed.
+   * @throws {NetworkError} If the RPC request fails due to network issues.
    *
    * @example
    * ```typescript
@@ -272,7 +283,7 @@ export class StelliumClient {
    *
    * @param paymentId - The numeric ID of the payment to verify.
    * @returns A promise that resolves to `true` if the payment exists and is completed, `false` otherwise.
-   * @throws {Error} If the RPC call fails due to network issues.
+   * @throws {NetworkError} If the RPC call fails due to network issues.
    *
    * @example
    * ```typescript
@@ -300,7 +311,7 @@ export class StelliumClient {
     try {
       result = await this.server.simulateTransaction(tx);
     } catch (err) {
-      throw new Error(
+      throw new NetworkError(
         `Failed to verify payment ${paymentId}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
@@ -320,7 +331,7 @@ export class StelliumClient {
    *
    * @param paymentId - The numeric ID of the payment to retrieve.
    * @returns A promise that resolves to a {@link PaymentDetails} object if found, or `null` if the payment does not exist.
-   * @throws {Error} If the RPC call fails due to network issues.
+   * @throws {NetworkError} If the RPC call fails due to network issues.
    *
    * @example
    * ```typescript
@@ -349,7 +360,7 @@ export class StelliumClient {
     try {
       result = await this.server.simulateTransaction(tx);
     } catch (err) {
-      throw new Error(
+      throw new NetworkError(
         `Failed to get payment ${paymentId}: ${err instanceof Error ? err.message : String(err)}`
       );
     }
@@ -409,7 +420,8 @@ export class StelliumClient {
    * @param params - Escrow action parameters containing the user's secret key and escrow ID.
    * @param action - The action to perform: `"release"` or `"refund"`.
    * @returns A promise that resolves to the transaction hash string.
-   * @throws {Error} If the transaction fails to submit or is rejected by the network.
+   * @throws {TransactionError} If the transaction fails to submit or is rejected by the network.
+   * @throws {NetworkError} If the RPC request fails due to network issues.
    */
   private async escrowAction(
     params: EscrowActionParams,
@@ -434,7 +446,10 @@ export class StelliumClient {
     const result = await this.server.sendTransaction(signedTx);
 
     if (result.status === "ERROR") {
-      throw new Error(`Transaction failed: ${JSON.stringify(result.errorResult)}`);
+      throw new TransactionError(
+        `Transaction failed: ${JSON.stringify(result.errorResult)}`,
+        result.errorResult
+      );
     }
 
     return result.hash;
