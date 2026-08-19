@@ -101,13 +101,15 @@ export class StelliumClient {
         lastError = err;
         // Don't retry if it's a known transaction error (e.g. simulation failed or rejected)
         if (err instanceof TransactionError) throw err;
-        
+
         if (attempt < maxRetries) {
-          await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+          await new Promise((resolve) => globalThis.setTimeout(resolve, 1000 * attempt));
         }
       }
     }
-    throw new NetworkError(`Operation failed after ${maxRetries} attempts. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`);
+    throw new NetworkError(
+      `Operation failed after ${maxRetries} attempts. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`
+    );
   }
 
   /**
@@ -435,9 +437,7 @@ export class StelliumClient {
       new Account("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "0"),
       { fee: BASE_FEE, networkPassphrase: this.networkPassphrase }
     )
-      .addOperation(
-        contract.call("get_escrow", nativeToScVal(BigInt(escrowId), { type: "u64" }))
-      )
+      .addOperation(contract.call("get_escrow", nativeToScVal(BigInt(escrowId), { type: "u64" })))
       .setTimeout(30)
       .build();
 
