@@ -21,8 +21,8 @@ import type {
   EscrowDetails,
   Network,
 } from "./types";
-import { getRpcUrl } from "./utils";
 import { TransactionError, NetworkError } from "./errors";
+import { getRpcUrl } from "./utils";
 
 const NETWORK_PASSPHRASES: Record<Network, string> = {
   testnet: Networks.TESTNET,
@@ -91,6 +91,27 @@ export class StelliumClient {
     this.paymentContractId = config.paymentContractId;
   }
 
+  /** Helper to retry async operations on network errors */
+  private async withRetry<T>(operation: () => Promise<T>, maxRetries = 3): Promise<T> {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        return await operation();
+      } catch (err) {
+        lastError = err;
+        // Don't retry if it's a known transaction error (e.g. simulation failed or rejected)
+        if (err instanceof TransactionError) throw err;
+
+        if (attempt < maxRetries) {
+          await new Promise((resolve) => globalThis.setTimeout(resolve, 1000 * attempt));
+        }
+      }
+    }
+    throw new NetworkError(
+      `Operation failed after ${maxRetries} attempts. Last error: ${lastError instanceof Error ? lastError.message : String(lastError)}`
+    );
+  }
+
   /**
    * Create and submit a direct payment transaction to the payment contract.
    *
@@ -139,10 +160,11 @@ export class StelliumClient {
       .setTimeout(30)
       .build();
 
-    const signedTx = await this.server.prepareTransaction(tx);
-    signedTx.sign(keypair);
-
-    const result = await this.server.sendTransaction(signedTx);
+    const result = await this.withRetry(async () => {
+      const signedTx = await this.server.prepareTransaction(tx);
+      signedTx.sign(keypair);
+      return await this.server.sendTransaction(signedTx);
+    });
 
     if (result.status === "ERROR") {
       throw new TransactionError(
@@ -209,10 +231,11 @@ export class StelliumClient {
       .setTimeout(30)
       .build();
 
-    const signedTx = await this.server.prepareTransaction(tx);
-    signedTx.sign(keypair);
-
-    const result = await this.server.sendTransaction(signedTx);
+    const result = await this.withRetry(async () => {
+      const signedTx = await this.server.prepareTransaction(tx);
+      signedTx.sign(keypair);
+      return await this.server.sendTransaction(signedTx);
+    });
 
     if (result.status === "ERROR") {
       throw new TransactionError(
@@ -309,8 +332,9 @@ export class StelliumClient {
 
     let result: SorobanRpc.Api.SimulateTransactionResponse;
     try {
-      result = await this.server.simulateTransaction(tx);
+      result = await this.withRetry(() => this.server.simulateTransaction(tx));
     } catch (err) {
+      if (err instanceof NetworkError) throw err;
       throw new NetworkError(
         `Failed to verify payment ${paymentId}: ${err instanceof Error ? err.message : String(err)}`
       );
@@ -358,8 +382,9 @@ export class StelliumClient {
 
     let result: SorobanRpc.Api.SimulateTransactionResponse;
     try {
-      result = await this.server.simulateTransaction(tx);
+      result = await this.withRetry(() => this.server.simulateTransaction(tx));
     } catch (err) {
+      if (err instanceof NetworkError) throw err;
       throw new NetworkError(
         `Failed to get payment ${paymentId}: ${err instanceof Error ? err.message : String(err)}`
       );
@@ -398,20 +423,59 @@ export class StelliumClient {
    *
    * @param escrowId - The numeric ID of the escrow to retrieve.
    * @returns A promise that resolves to an {@link EscrowDetails} object if found, or `null` if the escrow does not exist.
-   * @throws {Error} Always throws with "Not implemented" until the feature is completed.
+   * @throws {NetworkError} If the RPC call fails due to network issues.
    *
    * @example
    * ```typescript
-   * // Not yet implemented — see CONTRIBUTING.md
    * const escrow = await client.getEscrow(1);
    * ```
    */
-  // TODO: Implement getEscrow using Soroban RPC simulate
-  // Should call the escrow contract's `get_escrow` function and return typed details
-  async getEscrow(_escrowId: number): Promise<EscrowDetails | null> {
-    // Use this.server.simulateTransaction() to call `get_escrow(escrow_id)`
-    // Parse the ScVal response into an EscrowDetails object
-    throw new Error("Not implemented — see CONTRIBUTING.md");
+  async getEscrow(escrowId: number): Promise<EscrowDetails | null> {
+    const contract = new Contract(this.escrowContractId);
+
+    const tx = new TransactionBuilder(
+      new Account("GAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAWHF", "0"),
+      { fee: BASE_FEE, networkPassphrase: this.networkPassphrase }
+    )
+      .addOperation(contract.call("get_escrow", nativeToScVal(BigInt(escrowId), { type: "u64" })))
+      .setTimeout(30)
+      .build();
+
+    let result: SorobanRpc.Api.SimulateTransactionResponse;
+    try {
+      result = await this.withRetry(() => this.server.simulateTransaction(tx));
+    } catch (err) {
+      if (err instanceof NetworkError) throw err;
+      throw new NetworkError(
+        `Failed to get escrow ${escrowId}: ${err instanceof Error ? err.message : String(err)}`
+      );
+    }
+
+    if (!SorobanRpc.Api.isSimulationSuccess(result) || !result.result?.retval) {
+      return null;
+    }
+
+    const raw = scValToNative(result.result.retval) as {
+      id: bigint;
+      buyer: string;
+      seller: string;
+      amount: bigint;
+      asset: string;
+      timeout: bigint;
+      released: boolean;
+      refunded: boolean;
+    };
+
+    return {
+      id: Number(raw.id),
+      buyer: raw.buyer,
+      seller: raw.seller,
+      amount: raw.amount.toString(),
+      asset: raw.asset,
+      timeout: Number(raw.timeout),
+      released: raw.released,
+      refunded: raw.refunded,
+    };
   }
 
   /**
@@ -440,10 +504,11 @@ export class StelliumClient {
       .setTimeout(30)
       .build();
 
-    const signedTx = await this.server.prepareTransaction(tx);
-    signedTx.sign(keypair);
-
-    const result = await this.server.sendTransaction(signedTx);
+    const result = await this.withRetry(async () => {
+      const signedTx = await this.server.prepareTransaction(tx);
+      signedTx.sign(keypair);
+      return await this.server.sendTransaction(signedTx);
+    });
 
     if (result.status === "ERROR") {
       throw new TransactionError(

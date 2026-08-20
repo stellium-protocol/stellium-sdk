@@ -33,10 +33,7 @@ describe("webhooks", () => {
     const secret = "whsec_test123";
     const payload = '{"type":"payment.created","id":1}';
     const crypto = require("crypto");
-    const signature = crypto
-      .createHmac("sha256", secret)
-      .update(payload)
-      .digest("hex");
+    const signature = crypto.createHmac("sha256", secret).update(payload).digest("hex");
 
     expect(verifyWebhookSignature(payload, signature, secret)).toBe(true);
   });
@@ -50,10 +47,7 @@ describe("webhooks", () => {
     const secret = "whsec_test123";
     const originalPayload = '{"type":"payment.created","id":1}';
     const tamperedPayload = '{"type":"payment.created","id":999}';
-    const signature = crypto
-      .createHmac("sha256", secret)
-      .update(originalPayload)
-      .digest("hex");
+    const signature = crypto.createHmac("sha256", secret).update(originalPayload).digest("hex");
 
     expect(verifyWebhookSignature(tamperedPayload, signature, secret)).toBe(false);
   });
